@@ -1,12 +1,9 @@
-#pragma clang diagnostic push
-#pragma ide diagnostic ignored "cert-msc50-cpp"
 /**
- * @name IOS Projekt 2
+ * @name IOS Projekt 2 - Santa Claus synchronization problem
  * @author Pavel Kratochvil
  * login: xkrato61
- * version: V0.0
- * -std=gnu99 -Wall -Wextra -Werror -pedantic
- * -pthread
+ * version: V1.0
+ * CFLAGS=-std=gnu99 -Wall -Wextra -Werror -pedantic
  */
 
 #include <stdlib.h>
@@ -23,225 +20,292 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <time.h>
-
-#define SEM1 "/xkrato61-ElfCounter"
-#define SEM2 "/xkrato61-ReinCounter"
-#define SEM3 "/xkrato61-LogSem"
-#define SEM4 "/xkrato61-WorkLineSem"
-#define SEM5 "/xkrato61-ReinReady"
-#define SEM6 "/xkrato61-ReinReturned"
-#define SEM7 "/xkrato61-ElfNeedHelp"
-#define SEM8 "/xkrato61-Elf1Help"
-#define SEM9 "/xkrato61-Elf2Help"
-#define SEM10 "/xkrato61-GetHitched"
+#define SEM1 "/xkrato61-WaitToGetHitched"
+#define SEM2 "/xkrato61-MemSem"
+#define SEM3 "/xkrato61-ReinReady"
+#define SEM4 "/xkrato61-SantaNeeded"
+#define SEM5 "/xkrato61-AllReinHitched"
+#define SEM6 "/xkrato61-ElfGotHelp"
+#define SEM7 "/xkrato61-ProcessEnd"
+#define SEM8 "/xkrato61-WorkshopEmpty"
+#define SEM9 "/xkrato61-SantaDoneHelping"
 
 typedef struct SharedMem {
-    int elf_n;
-    int rein_n;
-    int log_count;
-    int rein_ready;
-    int line_n;         // number of elves in line_to_workshop for workshop
-    int workshop_sign;  // 0=work, 1=closed
+    int process_ended_counter;
+    int workshop_sign;   // 0=work, 1=closed
+    int rein_hitched;    // hitched reindeer counter
+    int rein_ready;      // ready reindeer counter
+    int log_count;       // log counter
+    int line_n;          // number of elves in line_to_workshop for workshop
+    int rein_n;          // reindeer counter for assigning ids
+    int elf_n;           // elf counter for assigning ids
 }SharedMem_t;
 
-sem_t *ElfCounter = NULL;
-sem_t *ReinCounter = NULL;
-sem_t *LogSem = NULL;
-sem_t *WorkLineSem = NULL;
+sem_t *WaitToGetHitched = NULL;
+sem_t *SantaDoneHelping = NULL;
+sem_t *AllReinHitched = NULL;
+sem_t *WorkshopEmpty = NULL;
+sem_t *SantaNeeded = NULL;
+sem_t *ElfGotHelp = NULL;
+sem_t *ProcessEnd = NULL;
 sem_t *ReinReady = NULL;
-sem_t *ReinReturned = NULL;
+sem_t *MemSem = NULL;
 
-sem_t *ElfNeedHelp = NULL;
-sem_t *Elf1Help = NULL;
-sem_t *Elf2Help = NULL;
-
-sem_t *GetHitched = NULL;
-
-
-int elf_n = 0;
-int rein_n = 0;
+int elf_id = 0;
+int rein_id = 0;
 
 static SharedMem_t *shared_mem = NULL;
 
-unsigned int n_e, n_r, t_e, t_r;
+FILE *fptr;
+
+int n_e, n_r, t_e, t_r;
 
 void elf_fn() {
+    sem_wait(MemSem);
+        // inc the number of elves
+        shared_mem -> elf_n++;
 
-    // sleep time - working alone
-    int sleep_time = rand() % (int)t_e + 1;
-    usleep(sleep_time);
+        // assign elf id
+        elf_id = shared_mem->elf_n;
 
-    // Need help from Santa
-    sem_wait(WorkLineSem);
-        shared_mem -> line_n = shared_mem -> line_n + 1;
-        printf("%d: Elf %d: need help\n", shared_mem ->log_count, elf_n);
-        printf("CURRENTLY %d IN LINE FOR WOOOOOOOORK\n", shared_mem->line_n);
-    sem_post(WorkLineSem);
+        // Elf's init log
+        shared_mem -> log_count++;
+        printf("%d: Elf %d: started\n", shared_mem ->log_count, elf_id);
+    sem_post(MemSem);
 
-    // If the workshop is closed, take holidays
-    if (shared_mem->workshop_sign) exit(0);
+    // while the workshop is open
+    while (1) {
 
-    switch (shared_mem->line_n) {
-        case 1:
-            // waits until Santa comes
-            sem_wait(Elf1Help);
+        // sleep time - working alone
+        int sleep_time = rand() % (int) t_e + 1;
+        usleep(sleep_time);
 
-            // if workshop is open
-            if (!shared_mem->workshop_sign) {
-
-                // Elf is getting help from Santa
-                sem_wait(LogSem);
-                    shared_mem->log_count++;
-                    printf("%d: Elf %d: get help\n", shared_mem->log_count, elf_n);
-                sem_post(LogSem);
-            }
-
-            sem_wait(LogSem);
+        // Need help from Santa
+        sem_wait(MemSem);
             shared_mem->log_count++;
-            printf("%d: Elf %d: taking holidays\n", shared_mem->log_count, elf_n);
-            sem_post(LogSem);
+            printf("%d: Elf %d: need help\n", shared_mem->log_count, elf_id);
+        sem_post(MemSem);
 
-            exit(0);
-        case 2:
-            // waits until Santa comes
-            sem_wait(Elf2Help);
 
-            // if workshop is open
-            if (!shared_mem->workshop_sign) {
+        sem_wait(WorkshopEmpty);
 
-                // Elf is getting help from Santa
-                sem_wait(LogSem);
+        sem_wait(MemSem);
+                // increment number of elves in line for work
+                shared_mem->line_n++;
+
+                if (shared_mem->line_n == 3) {
+                    // try to wakeup Santa
+                    sem_post(SantaNeeded);
+                } else {
+                    sem_post(WorkshopEmpty);
+                }
+        sem_post(MemSem);
+
+        // if the workshop is closed, take holidays and break
+            if (shared_mem->workshop_sign) {
+
+                sem_wait(MemSem);
                     shared_mem->log_count++;
-                    printf("%d: Elf %d: get help\n", shared_mem->log_count, elf_n);
-                sem_post(LogSem);
+                    printf("%d: Elf %d: taking holidays\n", shared_mem->log_count, elf_id);
+                sem_post(MemSem);
+
+                sem_post(WorkshopEmpty);
+                break;
             }
 
-            sem_wait(LogSem);
-                shared_mem->log_count++;
-                printf("%d: Elf %d: taking holidays\n", shared_mem->log_count, elf_n);
-            sem_post(LogSem);
+        // getting help from Santa
+        sem_wait(ElfGotHelp);
 
-            exit(0);
-        case 3:
-            // waits until Santa comes
-            sem_wait(ElfNeedHelp);
+            // if the workshop is closed, take holidays and break
+            if (shared_mem->workshop_sign) {
 
-            // if workshop is open
-            if (!shared_mem->workshop_sign) {
-
-                // Elf is getting help from Santa
-                sem_wait(LogSem);
+                sem_wait(MemSem);
                     shared_mem->log_count++;
-                    printf("%d: Elf %d: get help\n", shared_mem->log_count, elf_n);
-                sem_post(LogSem);
+                    printf("%d: Elf %d: taking holidays\n", shared_mem->log_count, elf_id);
+                sem_post(MemSem);
+
+                sem_post(WorkshopEmpty);
+                break;
             }
 
-                sem_wait(LogSem);
-                    shared_mem->log_count++;
-                    printf("%d: Elf %d: taking holidays\n", shared_mem->log_count, elf_n);
-                sem_post(LogSem);
+        // elf got help
+        sem_wait(MemSem);
+            shared_mem->line_n--;
 
-            exit(0);
-    }
-}
+            // the last one to leave let others to wait
+            if (shared_mem->line_n == 0) {
+                sem_post(WorkshopEmpty);
+                sem_post(SantaDoneHelping);
+            }
+            printf("%d: Elf %d: get help\n", shared_mem->log_count, elf_id);
+        sem_post(MemSem);
+
+    } // end while(1)
+
+    // increment exited process count
+    sem_wait(MemSem);
+
+        // increment of terminated processes
+        shared_mem->process_ended_counter++;
+
+        // the last process to finish unlock the main process to finish
+        if (shared_mem->process_ended_counter == n_e + n_r + 1) {
+            sem_post(ProcessEnd);
+        }
+    sem_post(MemSem);
+
+    // exit after work
+    exit(0);
+} // end elf_fn()
 
 void rein_fn() {
 
+    sem_wait(MemSem);
+        shared_mem->rein_n++;
+
+        // assign reindeer id
+        rein_id = shared_mem->rein_n;
+
+        // reindeer init message
+        shared_mem->log_count++;
+        printf("%d: RD %d: rstarted\n", shared_mem->log_count, rein_id);
+    sem_post(MemSem);
+
     // reindeer vacation
     int sleep_time = (int)t_r + (rand() % ((int)t_r/2) + 1);
-
-    // reindeer vacation
     usleep(sleep_time);
 
-    sem_wait(ReinReturned);
+    sem_wait(MemSem);
+        // reindeer returned home
+        shared_mem->rein_ready++;
+
+        printf("%d: RD %d: return home\n", shared_mem->log_count, rein_id);
+
+        // if all reindeer are home from vacation
+        if (shared_mem->rein_ready == n_r) {
+            sem_post(SantaNeeded);
+        }
+    sem_post(MemSem);
+
+    sem_wait(WaitToGetHitched);
+    sem_post(WaitToGetHitched);
+
+    sem_wait(MemSem);
+
+        shared_mem -> log_count++;
+        printf("%d: RD %d: get hitched\n", shared_mem ->log_count, rein_id);
 
         // incrementing number of reindeer ready to get hitched
-        shared_mem -> rein_ready++;
+        shared_mem -> rein_hitched++;
 
-        // reindeer returned home from vacation message
-        sem_wait(LogSem);
-            shared_mem -> log_count++;
-            printf("%d: RD %d: return home\n", shared_mem ->log_count, rein_n);
-        sem_post(LogSem);
+        // wake up Santa if all rein are hitched
+        if (shared_mem->rein_hitched == n_r) {
+            sem_post(AllReinHitched);
+        }
 
-    sem_post(ReinReturned);
+    sem_post(MemSem);
 
-    // wait until all reindeer are back from holidays
-    sem_wait(GetHitched);
-
-    // reindeer message get hitched
-    sem_wait(LogSem);
-        shared_mem -> log_count++;
-        printf("%d: RD %d: get hitched\n", shared_mem ->log_count, rein_n);
-    sem_post(LogSem);
+    // increment exited process count
+    sem_wait(MemSem);
+        // increment of terminated processes
+        shared_mem->process_ended_counter++;
+        // the last process to finish unlock the main process to finish
+        if (shared_mem->process_ended_counter == n_e + n_r + 1) {
+            sem_post(ProcessEnd);
+        }
+    sem_post(MemSem);
 
     // exiting hitched reindeer
     exit(0);
-}
+} // end rein_fn()
 
 void santa_fn() {
 
     // Santa's init log
-    sem_wait(LogSem);
+    sem_wait(MemSem);
         shared_mem -> log_count++;
         printf("%d: Santa: going to sleep.\n", shared_mem ->log_count);
-    sem_post(LogSem);
+    sem_post(MemSem);
 
     // helping elves until all reindeer are ready
-    while (shared_mem->rein_ready != n_r+1) {
+    while (1) {
 
-        //sem_wait(ReinReturned);
-        //    if (shared_mem->rein_ready == n_r) {
-        //        sem_post(GetHitched);
-        //    }
-        //sem_close(ReinReturned);
+        // wait until needed
+        sem_wait(SantaNeeded);
 
+        sem_wait(MemSem);
+        // all reindeer are ready
+        if (shared_mem->rein_ready == n_r) {
 
-        sem_wait(WorkLineSem);
-            // wake up Santa?
-            if (shared_mem->line_n > 2) {
-                // TODO: change this semaphore to a more general one for changing shared memory in a general way
-                sem_wait(LogSem);
-                printf("------Santas perspective: %d\n", shared_mem->line_n);
-                shared_mem -> line_n = shared_mem -> line_n - 3;
-                printf("-----Santas new perspective: %d\n", shared_mem->line_n);
-                sem_post(LogSem);
+            // close workshop
+            shared_mem->workshop_sign = 1;
 
-                // Santa is helping elves log
-                sem_wait(LogSem);
-                    shared_mem -> log_count++;
-                    printf("%d: Santa: helping elves\n", shared_mem ->log_count);
-                sem_post(LogSem);
+            // message from Santa closing workshop
+            shared_mem->log_count++;
+            printf("%d: Santa: closing workshop\n", shared_mem->log_count);
 
-                // unlocking ElfNeedHelp, that unlocks help for 3 other elves
-                sem_post(Elf1Help);
-                sem_post(Elf2Help);
-                sem_post(ElfNeedHelp);
+            sem_post(MemSem);
+            break;
+        } else {
+            // helping three elves
+            shared_mem->log_count++;
+            printf("%d: Santa: helping elves\n", shared_mem->log_count);
 
-            }
-        sem_post(WorkLineSem);
-    }
+            for (int i= 0; i < 3; i++) sem_post(ElfGotHelp);
 
-    sem_wait(LogSem);
-        shared_mem -> log_count++;
+            sem_post(MemSem);
+
+            sem_wait(SantaDoneHelping);
+
+            sem_wait(MemSem);
+                shared_mem->log_count++;
+                printf("%d: Santa: going to sleep.\n", shared_mem->log_count);
+            sem_post(MemSem);
+        } //end if (shared_mem->rein_ready == n_r)
+    } // end while(1)
+
+    for (int i= 0; i < 3; i++) sem_post(ElfGotHelp);
+
+    // Santa starts hitching reindeer
+    sem_post(WaitToGetHitched);
+
+    // wait until all reindeer get hitched
+    sem_wait(AllReinHitched);
+
+    // Santa's christmas started message
+    sem_wait(MemSem);
+        shared_mem->log_count++;
         printf("%d: Santa: Christmas started.\n", shared_mem ->log_count);
-    sem_post(LogSem);
+    sem_post(MemSem);
 
-    // TODO: hitch reindeer
+    // increment exited process count
+    sem_wait(MemSem);
+    printf("Santa exited and %d processes remain\n", shared_mem->process_ended_counter);
+        // increment of terminated processes
+        shared_mem->process_ended_counter++;
+
+        // the last process to finish unlock the main process to finish
+        if (shared_mem->process_ended_counter == n_e + n_r + 1) {
+            sem_post(ProcessEnd);
+        }
+    sem_post(MemSem);
+
     exit(0);
 }
 
 int init(){
     shared_mem = mmap(NULL, sizeof(SharedMem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    shared_mem -> elf_n = 0;            // counter for creation
-    shared_mem -> rein_n = 0;           // counter for creation
-    shared_mem -> log_count = 0;        // counter for logging
-    shared_mem -> line_n = 0;           // number of elves in line for workshop
-    shared_mem -> rein_ready = 0;       // number of reindeer ready to get hitched
-    shared_mem -> workshop_sign = 0;    // workshop sign, init to 0=work
+    shared_mem -> elf_n = 0;                    // counter for creation
+    shared_mem -> rein_n = 0;                   // counter for creation
+    shared_mem -> log_count = 0;                // counter for logging
+    shared_mem -> line_n = 0;                   // number of elves in line for workshop
+    shared_mem -> rein_ready = 0;               // number of reindeer ready to get hitched
+    shared_mem -> workshop_sign = 0;            // workshop sign, init to 0=work
+    shared_mem -> rein_hitched = 0;             // counter of hitched reindeer
+    shared_mem -> process_ended_counter = 0;    // counter of terminated processes
 
     if (shared_mem == MAP_FAILED){
-        fprintf(stderr,"Shared memory allocation failed. \n");
+        fprintf(stderr,"Shared memory allocation failed.\n");
         return 1;
     }
 
@@ -255,96 +319,99 @@ int init(){
     sem_unlink(SEM7);
     sem_unlink(SEM8);
     sem_unlink(SEM9);
-    sem_unlink(SEM10);
 
     {
-        // inits to UNLOCKED, unlocks only when a new elf is spawned
-        ElfCounter = sem_open(SEM1, O_CREAT | O_EXCL, 0666, 1);
-        if (ElfCounter == SEM_FAILED) {
+        // inits to LOCKED, Santa unlocks reindeer to get hitched
+        WaitToGetHitched = sem_open(SEM1, O_CREAT | O_EXCL, 0666, 0);
+        if (WaitToGetHitched == SEM_FAILED) {
             fprintf(stderr, "Semaphore no.1 construction failed.\n");
             return 1;
         }
 
-        // inits to UNLOCKED, unlocks only when a new reindeer is spawned
-        ReinCounter = sem_open(SEM2, O_CREAT | O_EXCL, 0666, 1);
-        if (ReinCounter == SEM_FAILED) {
+        // inits to UNLOCKED, unlocks during logging
+        MemSem = sem_open(SEM2, O_CREAT | O_EXCL, 0666, 1);
+        if (MemSem == SEM_FAILED) {
             fprintf(stderr, "Semaphore no.2 construction failed.\n");
             return 1;
         }
 
-        // inits to UNLOCKED, unlocks during logging
-        LogSem = sem_open(SEM3, O_CREAT | O_EXCL, 0666, 1);
-        if (LogSem == SEM_FAILED) {
+        // inits to LOCKED, unlocks when all reindeer are home
+        ReinReady = sem_open(SEM3, O_CREAT | O_EXCL, 0666, 0);
+        if (ReinReady == SEM_FAILED) {
             fprintf(stderr, "Semaphore no.3 construction failed.\n");
             return 1;
         }
 
-        // inits to UNLOCKED, unlocks only when an elf is joining the line to workshop
-        WorkLineSem = sem_open(SEM4, O_CREAT | O_EXCL, 0666, 1);
-        if (WorkLineSem == SEM_FAILED) {
+        // inits to LOCKED, unlocks when Santa is needed by elves or reindeer
+        SantaNeeded = sem_open(SEM4, O_CREAT | O_EXCL, 0666, 0);
+        if (SantaNeeded == SEM_FAILED) {
             fprintf(stderr, "Semaphore no.4 construction failed.\n");
             return 1;
         }
 
-        // inits to 0, when reindeer are ready switch to 1
-        ReinReady = sem_open(SEM5, O_CREAT | O_EXCL, 0666, 0);
-        if (ReinReady == SEM_FAILED) {
+        // inits to LOCKED, unlocks when all reindeer are hitched
+        AllReinHitched = sem_open(SEM5, O_CREAT | O_EXCL, 0666, 0);
+        if (AllReinHitched == SEM_FAILED) {
             fprintf(stderr, "Semaphore no.5 construction failed.\n");
             return 1;
         }
 
-        // inits to UNLOCKED, unlocks only when a reindeer returned from vacation
-        ReinReturned = sem_open(SEM6, O_CREAT | O_EXCL, 0666, 1);
-        if (ReinReturned == SEM_FAILED) {
+        // inits to LOCKED, unlocks when three elves get help in the workshop
+        ElfGotHelp = sem_open(SEM6, O_CREAT | O_EXCL, 0666, 0);
+        if (ElfGotHelp == SEM_FAILED) {
             fprintf(stderr, "Semaphore no.6 construction failed.\n");
             return 1;
         }
 
-        // inits to LOCKED, unlocks only if Santa helps elves in the workshop
-        ElfNeedHelp = sem_open(SEM7, O_CREAT | O_EXCL, 0666, 0);
-        if (ElfNeedHelp == SEM_FAILED) {
+        // inits to LOCKED, unlocks when all processes terminate
+        ProcessEnd = sem_open(SEM7, O_CREAT | O_EXCL, 0666, 0);
+        if (ProcessEnd == SEM_FAILED) {
             fprintf(stderr, "Semaphore no.7 construction failed.\n");
             return 1;
         }
 
-        // inits to LOCKED, unlocks only if Santa helps elves in the workshop
-        Elf1Help = sem_open(SEM8, O_CREAT | O_EXCL, 0666, 0);
-        if (Elf1Help == SEM_FAILED) {
+        // inits to UNLOCKED, locks when Workshop is full
+        WorkshopEmpty = sem_open(SEM8, O_CREAT | O_EXCL, 0666, 1);
+        if (WorkshopEmpty == SEM_FAILED) {
             fprintf(stderr, "Semaphore no.8 construction failed.\n");
             return 1;
         }
 
-        // inits to LOCKED, unlocks only if Santa helps elves in the workshop
-        Elf2Help = sem_open(SEM9, O_CREAT | O_EXCL, 0666, 0);
-        if (Elf2Help == SEM_FAILED) {
+        // inits to LOCKED, unlocks when Santa finishes help
+        SantaDoneHelping = sem_open(SEM9, O_CREAT | O_EXCL, 0666, 0);
+        if (SantaDoneHelping == SEM_FAILED) {
             fprintf(stderr, "Semaphore no.9 construction failed.\n");
             return 1;
         }
-
-        // inits to LOCKED, only santa can unlock a hitch a reindeer
-        GetHitched = sem_open(SEM10, O_CREAT | O_EXCL, 0666, 0);
-        if (GetHitched == SEM_FAILED) {
-            fprintf(stderr, "Semaphore no.10 construction failed.\n");
-            return 1;
-        }
-
     }
+
+    fptr = fopen("proj2.out", "w+");
+    if(fptr == NULL)
+    {
+        fprintf(stderr, "Unable to create file.\n");
+        return 1;
+    }
+
     return 0;
 }
 
 void dest(){
+    // destroy shared memory
     munmap(shared_mem, sizeof(SharedMem_t));
-    sem_close(ElfCounter);
-    sem_close(ReinCounter);
-    sem_close(LogSem);
-    sem_close(WorkLineSem);
+
+    // closing semaphores
+    sem_close(WaitToGetHitched);
+    sem_close(MemSem);
     sem_close(ReinReady);
-    sem_close(ReinReturned);
-    sem_close(ElfNeedHelp);
-    sem_close(Elf1Help);
-    sem_close(Elf2Help);
-    sem_close(GetHitched);
-    // TODO: Unlink all semaphores
+    sem_close(SantaNeeded);
+    sem_close(AllReinHitched);
+    sem_close(ElfGotHelp);
+    sem_close(ProcessEnd);
+    sem_close(WorkshopEmpty);
+    sem_close(SantaDoneHelping);
+
+    // close output file
+    fclose(fptr);
 }
 
 void print_help () {
@@ -356,7 +423,7 @@ void print_help () {
 }
 
 void incorrect_params_exit () {
-    printf("Incorrect params format!\n\n");
+    fprintf(stderr, "Incorrect params format!\n");
     print_help();
 }
 
@@ -370,97 +437,87 @@ int is_int (const char *string_val) {
     return number_d == number_i;
 }
 
-unsigned int str_to_int (const char *string_val) {
+int str_to_int (const char *string_val) {
     char *ptr;
-    return (unsigned int)strtod(string_val, &ptr);
+    return (int)strtod(string_val, &ptr);
 }
 
 int correct_arg_count(int argc, char *argv[]) {
     if (argc == 1 || !strcmp(argv[1], "--help" )) {
         print_help();
-        return 0;
+        return 1;
     }
 
     if (argc != 5) {
         incorrect_params_exit();
-        return 0;
+        return 1;
     }
-    return 1;
+    return 0;
 }
 
-int check_get_params(char *argv[], unsigned int *n_ep, unsigned int *n_rp, unsigned int *t_ep, unsigned int *t_rp) {
-    if (!is_int(argv[1]) || !is_int(argv[1]) || !is_int(argv[1]) || !is_int(argv[4])) {
-        incorrect_params_exit();
-        return 0;
+int check_get_params(char *argv[], int *n_ep, int *n_rp, int *t_ep, int *t_rp) {
+    if (!is_int(argv[1]) || !is_int(argv[2]) || !is_int(argv[3]) || !is_int(argv[4])) {
+        return 1;
     }
-    // TODO: all are supposed to be >= 0
-    *n_ep = str_to_int(argv[1]);
-    *n_rp = str_to_int(argv[2]);
-    *t_ep = str_to_int(argv[3]);
-    *t_rp = str_to_int(argv[4]);
-    return 1;
+
+    if (str_to_int(argv[1]) > 0 && str_to_int(argv[1]) < 1000 &&
+            str_to_int(argv[2]) > 0 && str_to_int(argv[2]) < 20 &&
+            str_to_int(argv[3]) >= 0 && str_to_int(argv[3]) <= 1000 &&
+            str_to_int(argv[4]) >= 0 && str_to_int(argv[4]) <= 1000) {
+
+        *n_ep = str_to_int(argv[1]);
+        *n_rp = str_to_int(argv[2]);
+        *t_ep = str_to_int(argv[3]);
+        *t_rp = str_to_int(argv[4]);
+        return 0;
+    } else {
+        return 1;
+    }
 }
 
 int main(int argc, char *argv[]) {
 
-    // correct argument count check
-    if (!correct_arg_count(argc, argv)) return 1;
+    // argument count check
+    if (correct_arg_count(argc, argv)) {
+        return 1;
+    }
 
-    // checking argument validity
-    if (!check_get_params(argv, &n_e, &n_r, &t_e, &t_r)) return 1;
+    // argument validity check
+    if (check_get_params(argv, &n_e, &n_r, &t_e, &t_r)) {
+        incorrect_params_exit();
+        return 1;
+    }
 
     // Initializes semaphores
     init();
 
-    // Satan creation
+    // Santa creation
     pid_t parent = fork();
     if (parent == 0){
         santa_fn();
     }
     else {
-        // eleves creation
-        printf("number of elves: %d\n", n_e);
+        // elves creation
         for (int i = 0; i < n_e; i++) {
             pid_t pid = fork();
             if (pid == 0) {
-
-                sem_wait(ElfCounter);
-                    // inc the number of elves
-                    shared_mem -> elf_n++;
-
-                    // assign elf id
-                    elf_n = shared_mem->elf_n;
-
-                    // Elf's init log
-                    sem_wait(LogSem);
-                        shared_mem -> log_count++;
-                        printf("%d: Elf %d: started\n", shared_mem ->log_count, elf_n);
-                    sem_post(LogSem);
-
-                sem_post(ElfCounter);
-
                 // elf's work, holidays and exit
                 elf_fn();
-                exit(0);
             }
         }
         for (int i = 0; i < n_r; i++) {
             pid_t rein = fork();
             if (rein == 0) {
-                sem_wait(ReinCounter);
-                    shared_mem -> rein_n++;
-                    rein_n = shared_mem->rein_n;
-                    sem_wait(LogSem);
-                        shared_mem -> log_count++;
-                        printf("%d: RD %d: rstarted\n", shared_mem ->log_count, rein_n);
-                    sem_post(LogSem);
-
-                sem_post(ReinCounter);
+                // reindeer's vacation, hitching and exit
                 rein_fn();
-                exit(0);
             }
         }
     }
+
+    // main process waits for all to finish
+    sem_wait(ProcessEnd);
+
+    // destructor
     dest();
     return 0;
 }

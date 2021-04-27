@@ -6,7 +6,7 @@ FILE=main.c
 
 all: main.c
 	$(CC) $(FILE) -o a $(CFLAGS)
-	./a 9 15 100 100
+	./a 5 5  100 100
 
 clean:
 	rm -rf a
