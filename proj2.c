@@ -70,7 +70,8 @@ void elf_fn() {
 
         // Elf's init log
         shared_mem -> log_count++;
-        printf("%d: Elf %d: started\n", shared_mem ->log_count, elf_id);
+        fprintf(fptr, "%d: Elf %d: started\n", shared_mem ->log_count, elf_id);
+        fflush(fptr);
     sem_post(MemSem);
 
     // while the workshop is open
@@ -83,7 +84,8 @@ void elf_fn() {
         // Need help from Santa
         sem_wait(MemSem);
             shared_mem->log_count++;
-            printf("%d: Elf %d: need help\n", shared_mem->log_count, elf_id);
+            fprintf(fptr, "%d: Elf %d: need help\n", shared_mem->log_count, elf_id);
+            fflush(fptr);
         sem_post(MemSem);
 
 
@@ -106,7 +108,8 @@ void elf_fn() {
 
                 sem_wait(MemSem);
                     shared_mem->log_count++;
-                    printf("%d: Elf %d: taking holidays\n", shared_mem->log_count, elf_id);
+                    fprintf(fptr, "%d: Elf %d: taking holidays\n", shared_mem->log_count, elf_id);
+                    fflush(fptr);
                 sem_post(MemSem);
 
                 sem_post(WorkshopEmpty);
@@ -121,7 +124,8 @@ void elf_fn() {
 
                 sem_wait(MemSem);
                     shared_mem->log_count++;
-                    printf("%d: Elf %d: taking holidays\n", shared_mem->log_count, elf_id);
+                    fprintf(fptr, "%d: Elf %d: taking holidays\n", shared_mem->log_count, elf_id);
+                    fflush(fptr);
                 sem_post(MemSem);
 
                 sem_post(WorkshopEmpty);
@@ -137,7 +141,9 @@ void elf_fn() {
                 sem_post(WorkshopEmpty);
                 sem_post(SantaDoneHelping);
             }
-            printf("%d: Elf %d: get help\n", shared_mem->log_count, elf_id);
+            shared_mem->log_count++;
+            fprintf(fptr, "%d: Elf %d: get help\n", shared_mem->log_count, elf_id);
+            fflush(fptr);
         sem_post(MemSem);
 
     } // end while(1)
@@ -168,18 +174,21 @@ void rein_fn() {
 
         // reindeer init message
         shared_mem->log_count++;
-        printf("%d: RD %d: rstarted\n", shared_mem->log_count, rein_id);
+        fprintf(fptr, "%d: RD %d: rstarted\n", shared_mem->log_count, rein_id);
+        fflush(fptr);
     sem_post(MemSem);
 
     // reindeer vacation
-    int sleep_time = (int)t_r + (rand() % ((int)t_r/2) + 1);
+    int sleep_time = rand() % (t_r + 1);
     usleep(sleep_time);
 
     sem_wait(MemSem);
         // reindeer returned home
         shared_mem->rein_ready++;
 
-        printf("%d: RD %d: return home\n", shared_mem->log_count, rein_id);
+        shared_mem->log_count++;
+        fprintf(fptr, "%d: RD %d: return home\n", shared_mem->log_count, rein_id);
+        fflush(fptr);
 
         // if all reindeer are home from vacation
         if (shared_mem->rein_ready == n_r) {
@@ -193,7 +202,8 @@ void rein_fn() {
     sem_wait(MemSem);
 
         shared_mem -> log_count++;
-        printf("%d: RD %d: get hitched\n", shared_mem ->log_count, rein_id);
+        fprintf(fptr, "%d: RD %d: get hitched\n", shared_mem ->log_count, rein_id);
+        fflush(fptr);
 
         // incrementing number of reindeer ready to get hitched
         shared_mem -> rein_hitched++;
@@ -224,7 +234,8 @@ void santa_fn() {
     // Santa's init log
     sem_wait(MemSem);
         shared_mem -> log_count++;
-        printf("%d: Santa: going to sleep.\n", shared_mem ->log_count);
+        fprintf(fptr, "%d: Santa: going to sleep\n", shared_mem ->log_count);
+        fflush(fptr);
     sem_post(MemSem);
 
     // helping elves until all reindeer are ready
@@ -242,14 +253,16 @@ void santa_fn() {
 
             // message from Santa closing workshop
             shared_mem->log_count++;
-            printf("%d: Santa: closing workshop\n", shared_mem->log_count);
+            fprintf(fptr, "%d: Santa: closing workshop\n", shared_mem->log_count);
+            fflush(fptr);
 
             sem_post(MemSem);
             break;
         } else {
             // helping three elves
             shared_mem->log_count++;
-            printf("%d: Santa: helping elves\n", shared_mem->log_count);
+            fprintf(fptr, "%d: Santa: helping elves\n", shared_mem->log_count);
+            fflush(fptr);
 
             for (int i= 0; i < 3; i++) sem_post(ElfGotHelp);
 
@@ -259,7 +272,8 @@ void santa_fn() {
 
             sem_wait(MemSem);
                 shared_mem->log_count++;
-                printf("%d: Santa: going to sleep.\n", shared_mem->log_count);
+                fprintf(fptr, "%d: Santa: going to sleep\n", shared_mem->log_count);
+                fflush(fptr);
             sem_post(MemSem);
         } //end if (shared_mem->rein_ready == n_r)
     } // end while(1)
@@ -275,12 +289,13 @@ void santa_fn() {
     // Santa's christmas started message
     sem_wait(MemSem);
         shared_mem->log_count++;
-        printf("%d: Santa: Christmas started.\n", shared_mem ->log_count);
+        fprintf(fptr, "%d: Santa: Christmas started\n", shared_mem ->log_count);
+        fflush(fptr);
     sem_post(MemSem);
 
     // increment exited process count
     sem_wait(MemSem);
-    printf("Santa exited and %d processes remain\n", shared_mem->process_ended_counter);
+
         // increment of terminated processes
         shared_mem->process_ended_counter++;
 
